@@ -1,6 +1,6 @@
 # Shareable Habitat export
 
-Status: source prepared; publication pending
+Status: published
 Date: 2026-09-10
 
 ## Request
@@ -28,3 +28,10 @@ No existing sandbox is reconfigured or started to prepare this export.
 - Eight command-wrapper tests passed with a mock Docker executable.
 - Independent source review found no blocking privacy or configuration issue.
 - A fresh image build and live first-run sequence remain unrun for this export.
+
+## Delivery
+
+Published at [Jeff-Kazzee/habitat-vivary](https://github.com/Jeff-Kazzee/habitat-vivary).
+The initial staged export contained 21 files. The complete reachable Git history
+passed the credential pattern scan before the first push. Private machine-path
+and account markers were checked separately and were absent.

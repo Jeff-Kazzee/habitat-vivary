@@ -80,6 +80,13 @@ def main() -> int:
         environment.pop("BASH_ENV", None)
         environment.pop("ENV", None)
         environment["PATH"] = str(mock_bin) + os.pathsep + environment.get("PATH", "")
+        resolved = subprocess.run(
+            [str(bash), "--noprofile", "--norc", "-c", "command -v docker"],
+            cwd=checkouts, env=environment, stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+        if resolved.returncode != 0 or resolved.stdout.strip() != shell_path(docker):
+            raise RuntimeError("refused tests because Docker does not resolve to the recording stub")
 
         def invoke(*arguments: str, env_file: bool = True):
             log = work / "docker-argv"

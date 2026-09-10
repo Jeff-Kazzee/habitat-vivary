@@ -12,6 +12,8 @@ build and first-run sequence have not been rerun for this export.
 The 2026-09-10 source check passed 59 assertions. All eight command-wrapper
 tests passed using Git for Windows Bash and a mock Docker executable.
 Independent source review found no blocking privacy or configuration issues.
+The initial 21-file export passed a complete reachable-history credential
+pattern scan and a separate private-path/account-marker check before its first push.
 
 `scripts/verify-source.py` uses Docker Compose's parser to inspect the resolved
 configuration. It does not contact a Docker daemon or start containers.
