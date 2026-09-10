@@ -1,0 +1,6 @@
+# Optional host configuration. Merge into %UserProfile%\.wslconfig.
+# These limits affect ALL WSL2 distributions on the machine.
+[wsl2]
+memory=4GB
+processors=4
+swap=0

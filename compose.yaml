@@ -1,0 +1,82 @@
+name: ${COMPOSE_PROJECT_NAME:?Set COMPOSE_PROJECT_NAME in .env}
+
+services:
+  proxy:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    image: habitat-vivary/proxy:2026-09-10
+    networks: [egress, sandbox]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /run:size=16m,nosuid,nodev
+      - /var/log/squid:size=16m,nosuid,nodev
+      - /var/spool/squid:size=32m,nosuid,nodev
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+      interval: 5s
+      timeout: 2s
+      retries: 6
+      start_period: 5s
+
+  dev:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: habitat-vivary/dev:2026-09-10
+    depends_on:
+      proxy:
+        condition: service_healthy
+    command: ["/bin/bash", "-lc", "trap : TERM INT; sleep infinity & wait"]
+    init: true
+    environment:
+      CLAUDE_CONFIG_DIR: /home/ubuntu/.claude
+      XDG_CACHE_HOME: /tmp/cache
+      npm_config_cache: /tmp/npm-cache
+      npm_config_store_dir: /tmp/pnpm-store
+      HTTP_PROXY: http://proxy:3128
+      HTTPS_PROXY: http://proxy:3128
+      NO_PROXY: localhost,127.0.0.1,proxy
+      http_proxy: http://proxy:3128
+      https_proxy: http://proxy:3128
+      no_proxy: localhost,127.0.0.1,proxy
+    networks: [sandbox]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=512m,nosuid,nodev
+    volumes:
+      - type: bind
+        source: ${HABITAT_PROJECT_DIR:?Set HABITAT_PROJECT_DIR in .env to an existing Linux project directory}
+        target: /workspace/project
+        bind:
+          create_host_path: false
+      - claude-home:/home/ubuntu/.claude
+      - codex-home:/home/ubuntu/.codex
+      - varlock-home:/home/ubuntu/.config/varlock
+    working_dir: /workspace/project
+    mem_limit: 2g
+    memswap_limit: 2g
+    cpus: 2
+    pids_limit: 256
+    restart: "no"
+
+networks:
+  sandbox:
+    internal: true
+  egress: {}
+
+volumes:
+  claude-home: {}
+  codex-home: {}
+  varlock-home: {}

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Habitat Vivary · Codebase map</title>
+<style>
+  :root { color-scheme: light; background: #f3f3f1; color: #151719; font: 16px/1.6 system-ui, sans-serif; }
+  body { max-width: 850px; margin: 4rem auto; padding: 0 1.5rem; }
+  h1 { font-size: clamp(2rem, 7vw, 3.5rem); line-height: 1.1; margin-bottom: 1rem; }
+  a { color: #a42f12; text-underline-offset: .2em; }
+  details { border-top: 1px solid #c9cac6; padding: 1rem 0; }
+  summary { cursor: pointer; font-size: 1.15rem; font-weight: 650; }
+  pre { overflow: auto; padding: 1rem; background: #e9e9e5; border-left: 3px solid #c93a16; }
+  footer { border-top: 1px solid #151719; margin-top: 2rem; padding-top: 1rem; }
+</style>
+<main>
+  <p><a href="README.md">Habitat Vivary</a> / Source map</p>
+  <h1>One project.<br>One container boundary.</h1>
+  <p>The command wrapper calls Docker Compose. Compose starts a development
+  container and a network proxy. Your project folder and agent login volumes
+  supply the writable state.</p>
+  <pre aria-label="Habitat component relationships">Linux host or dedicated WSL2 distribution
+  habitat.sh → compose.yaml
+    ├─ dev container → selected project + agent state volumes
+    └─ proxy container → permitted network destinations
+          ↑
+      internal network ← dev container</pre>
+  <details open>
+    <summary>Configuration and runtime</summary>
+    <ul>
+      <li><a href="habitat.sh">habitat.sh</a>: explicit check, build, start, shell, status, and stop commands.</li>
+      <li><a href="compose.yaml">compose.yaml</a>: containers, mounts, networks, volumes, and resource limits.</li>
+      <li><a href=".env.example">.env.example</a>: local project name and path configuration.</li>
+      <li><a href="Dockerfile.dev">Dockerfile.dev</a>: development tools and non-root user.</li>
+      <li><a href="Dockerfile.proxy">Dockerfile.proxy</a>: Squid proxy image.</li>
+      <li><a href="squid.conf">squid.conf</a>: destination-domain allowlist.</li>
+    </ul>
+  </details>
+  <details>
+    <summary>Setup and operational limits</summary>
+    <ul>
+      <li><a href="docs/windows-setup.md">Windows setup</a>: dedicated WSL2 environment.</li>
+      <li><a href="examples/wsl.conf">wsl.conf</a>: per-distribution isolation settings.</li>
+      <li><a href="examples/wslconfig.example">wslconfig.example</a>: optional host-wide WSL resource limits.</li>
+      <li><a href="docs/security.md">Security and limits</a>: writable data, credentials, network, and build boundaries.</li>
+      <li><a href="docs/origin.md">Origin</a>: the local setup and its upstream components.</li>
+    </ul>
+  </details>
+  <details>
+    <summary>Verification and maintenance</summary>
+    <ul>
+      <li><a href="scripts/verify-source.py">verify-source.py</a>: daemon-free configuration checks.</li>
+      <li><a href="scripts/test-cli.py">test-cli.py</a>: command dispatch against a mock Docker executable.</li>
+      <li><a href="docs/verification.md">Verification</a>: source checks and first-build checks.</li>
+      <li><a href="AGENTS.md">AGENTS.md</a>: maintenance instructions.</li>
+      <li><a href="planning/shareable-export.md">Export task</a>: scope and completion conditions.</li>
+    </ul>
+  </details>
+  <footer>Source map for the 2026-09-10 export. No scripts, fonts, or other resources are loaded from the network.</footer>
+</main>
+</html>

@@ -1,0 +1,4 @@
+**
+!Dockerfile.dev
+!Dockerfile.proxy
+!squid.conf
