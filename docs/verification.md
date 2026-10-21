@@ -31,6 +31,19 @@ expiry boundaries, the current image pin's support status, and the incident-spec
 CA package pins in both images. It downloads no runtime or dependency.
 The Source security workflow runs these three source checks on pull requests
 and pushes to `main`. It does not build or publish an image.
+Its first step is the complete inline reviewed PowerShell probe. Before checkout,
+it finds the ancestor Runner.Worker and checks that worker's bundled node24
+executable, without substituting PATH Node. An affected or unknown runtime,
+migration override or runner hook fails the job before JavaScript actions run.
+Source tests bind the inline bytes to the vetted canonical script and admit
+only this reviewed native hosted job and immutable checkout action.
+
+The pinned [checkout manifest](https://github.com/actions/checkout/blob/d23441a48e516b6c34aea4fa41551a30e30af803/action.yml)
+uses node24 for main and post steps and has no pre hook. Run steps cannot
+precede action pre hooks, runner job hooks, or early hashFiles evaluation.
+Those provider boundaries remain outside this guard. There is no diagnostic
+action that bypasses a failed probe, and CI must fail if the provider runtime
+is below the security floor.
 
 For the October 21 Node change, container-build and tool compatibility checks
 remain pending. See [Node security verification](node-security.md) for the

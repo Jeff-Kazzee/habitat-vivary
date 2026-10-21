@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import unittest
+import hashlib
 from pathlib import Path
 from unittest.mock import patch
 from datetime import date, datetime, timezone
@@ -26,6 +27,48 @@ verify_spec = importlib.util.spec_from_file_location("source_verifier", ROOT / "
 assert verify_spec is not None and verify_spec.loader is not None
 verifier = importlib.util.module_from_spec(verify_spec)
 verify_spec.loader.exec_module(verifier)
+
+
+class ActionRuntimeBindingTests(unittest.TestCase):
+    def setUp(self):
+        self.canonical = (ROOT / "scripts/action-runtime.ps1").read_bytes()
+        self.workflow = (ROOT / ".github/workflows/source-security.yml").read_text()
+
+    def test_first_step_binds_exact_vetted_source_bytes(self):
+        self.assertEqual(hashlib.sha256(self.canonical).hexdigest(),
+                         "1e078b8a740865abfea7c5d3310b5930a5c7e135f02f89e5f9d09dd0e37cf38d")
+        self.assertTrue(verifier.action_runtime_binding_matches(self.canonical, self.workflow))
+        block = self.workflow.removeprefix(verifier.WORKFLOW_PREFIX).removesuffix(verifier.WORKFLOW_SUFFIX)
+        self.assertEqual("".join(line[10:] for line in block.splitlines(keepends=True)).encode(), self.canonical)
+
+    def test_editing_inline_and_canonical_together_cannot_replace_vetted_probe(self):
+        changed = self.canonical.replace(b"24.22.1", b"24.21.0")
+        self.assertFalse(verifier.action_runtime_binding_matches(changed, self.workflow.replace("24.22.1", "24.21.0")))
+
+    def test_node20_unknown_runtime_and_skip_override_mutations_fail(self):
+        mutations = (
+            self.workflow.replace("@('node24')", "@('node20')"),
+            self.workflow.replace("@('node24')", "@('node99')"),
+            self.workflow.replace("        id: action-runtime\n", "        id: action-runtime\n        if: false\n"),
+            self.workflow.replace("    steps:\n", "    env:\n      ACTIONS_RUNNER_FORCE_ACTIONS_NODE_VERSION: node20\n    steps:\n"),
+            self.workflow.replace("d23441a48e516b6c34aea4fa41551a30e30af803", "unreviewed"),
+        )
+        for changed in mutations:
+            with self.subTest(changed=changed[:80]):
+                self.assertNotEqual(changed, self.workflow)
+                self.assertFalse(verifier.action_runtime_binding_matches(self.canonical, changed))
+
+    def test_early_expressions_diagnostics_extra_jobs_and_containers_fail(self):
+        mutations = (
+            self.workflow.replace("    steps:\n", "    env:\n      EARLY: ${{ hashFiles('**') }}\n    steps:\n"),
+            self.workflow + "      - uses: unreviewed/diagnostics@main\n        if: always()\n",
+            self.workflow + "  other-job:\n    runs-on: ubuntu-24.04\n    steps: []\n",
+            self.workflow.replace("    steps:\n", "    container: node:20\n    steps:\n"),
+            self.workflow.replace("    steps:\n", "    steps:\n      - run: echo unreviewed\n"),
+        )
+        for changed in mutations:
+            with self.subTest(changed=changed[:80]):
+                self.assertFalse(verifier.action_runtime_binding_matches(self.canonical, changed))
 
 
 class ComposeBindSerializationTests(unittest.TestCase):

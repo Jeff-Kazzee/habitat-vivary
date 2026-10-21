@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -15,11 +16,55 @@ TEXT_FILES = (
     "squid.conf", "habitat.sh", "scripts/verify-source.py", "scripts/test-cli.py",
     "scripts/check-node-security.py", "scripts/test-node-security.py",
     "scripts/habitat-entrypoint.sh", ".github/workflows/source-security.yml",
+    "scripts/action-runtime.ps1",
 )
 EXPECTED = {
     "proxy": {"cpus": 0.5, "memory": 256 * 1024**2, "pids": 64},
     "dev": {"cpus": 2.0, "memory": 2 * 1024**3, "pids": 256},
 }
+
+VETTED_ACTION_RUNTIME_SHA256 = "1e078b8a740865abfea7c5d3310b5930a5c7e135f02f89e5f9d09dd0e37cf38d"
+WORKFLOW_PREFIX = """name: Source security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  source-security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify bundled GitHub action runtime
+        id: action-runtime
+        shell: pwsh
+        run: |+
+"""
+WORKFLOW_SUFFIX = """      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Test Node policy and build guards
+        run: python3 scripts/test-node-security.py
+      - name: Validate Compose without starting Docker
+        run: python3 scripts/verify-source.py
+      - name: Test command dispatch against a Docker stub
+        run: python3 scripts/test-cli.py
+"""
+
+
+def action_runtime_binding_matches(canonical: bytes, workflow: str) -> bool:
+    """Require the exact vetted bytes and one reviewed native hosted job."""
+    if hashlib.sha256(canonical).hexdigest() != VETTED_ACTION_RUNTIME_SHA256:
+        return False
+    try:
+        inline = "".join("          " + line for line in canonical.decode("utf-8").splitlines(keepends=True))
+    except UnicodeDecodeError:
+        return False
+    return workflow == WORKFLOW_PREFIX + inline + WORKFLOW_SUFFIX
 
 
 def integer(value: object) -> int | None:
@@ -84,6 +129,13 @@ def main() -> int:
         if path.is_file() and not path.is_symlink():
             raw = path.read_bytes()
             check(b"\r" not in raw and raw.endswith(b"\n"), f"file must use LF and end with a newline: {name}")
+
+    canonical = ROOT / "scripts/action-runtime.ps1"
+    workflow = ROOT / ".github/workflows/source-security.yml"
+    check(canonical.is_file() and not canonical.is_symlink()
+          and workflow.is_file() and not workflow.is_symlink()
+          and action_runtime_binding_matches(canonical.read_bytes(), workflow.read_text()),
+          "source CI must start with the exact vetted inline action-runtime probe")
 
     command = [
         "docker", "compose", "--project-directory", str(ROOT),
