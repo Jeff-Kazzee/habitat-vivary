@@ -231,7 +231,7 @@ class ImageContractTests(unittest.TestCase):
         self.assertIn("1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce  /tmp/node.tar.xz", dockerfile)
         self.assertLess(dockerfile.index("sha256sum --check --strict"), dockerfile.index("tar -xJf /tmp/node.tar.xz"))
         self.assertNotIn('"node@${NODE_VERSION}"', dockerfile)
-        self.assertLess(dockerfile.index("python /usr/local/lib/habitat/check-node-security.py"), dockerfile.index("RUN corepack enable"))
+        self.assertLess(dockerfile.index("/usr/local/bin/habitat-python /usr/local/lib/habitat/check-node-security.py"), dockerfile.index("RUN corepack enable"))
         self.assertIn('ENTRYPOINT ["/bin/bash", "/usr/local/bin/habitat-entrypoint"]', dockerfile)
 
     def test_corepack_and_global_tools_keep_user_writable_paths(self):
@@ -242,9 +242,53 @@ class ImageContractTests(unittest.TestCase):
 
     def test_startup_guard_precedes_command_and_new_image_is_required(self):
         entrypoint = (ROOT / "scripts/habitat-entrypoint.sh").read_text()
-        self.assertEqual(entrypoint, '#!/usr/bin/env bash\nset -euo pipefail\n\npython /usr/local/lib/habitat/check-node-security.py\nexec "$@"\n')
+        self.assertEqual(entrypoint, '#!/usr/bin/env bash\nset -euo pipefail\n\n/usr/local/bin/habitat-python /usr/local/lib/habitat/check-node-security.py\nexec "$@"\n')
         self.assertIn("image: habitat-vivary/dev:2026-10-21-node22.23.4", (ROOT / "compose.yaml").read_text())
         self.assertIn("image: habitat-vivary/proxy:2026-10-21-emudhra", (ROOT / "compose.yaml").read_text())
+
+    def test_guard_python_link_tracks_the_build_pin_before_user_switch(self):
+        dockerfile = (ROOT / "Dockerfile.dev").read_text()
+        link = 'RUN ln -s "${MISE_DATA_DIR}/installs/python/${PYTHON_VERSION}/bin/python" /usr/local/bin/habitat-python'
+        self.assertIn(link, dockerfile)
+        self.assertLess(dockerfile.index(link), dockerfile.index("USER ubuntu"))
+        self.assertIn('test "$(/usr/local/bin/habitat-python --version)" = "Python ${PYTHON_VERSION}"', dockerfile)
+
+    def run_entrypoint_fixture(self, entrypoint, guard_status=0):
+        bash = (Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git/bin/bash.exe") if os.name == "nt" else Path("/bin/bash")
+        environment = os.environ.copy()
+        environment.pop("BASH_ENV", None)
+        environment.pop("ENV", None)
+        # Model an unavailable project-selected Python without executing mise.
+        fixture = '''function python { printf 'project Python is not installed\\n' >&2; return 127; }
+function /usr/local/bin/habitat-python {
+    [[ "$#" -eq 1 && "$1" == /usr/local/lib/habitat/check-node-security.py ]] || return 99
+    printf 'guard\\n'
+    return GUARD_STATUS
+}
+set -- /usr/bin/printf 'command:%s\\n' 'argument with spaces'
+'''.replace("GUARD_STATUS", str(guard_status))
+        return subprocess.run([str(bash), "--noprofile", "--norc", "-c", fixture + entrypoint],
+                              env=environment, stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, timeout=10)
+
+    def test_project_python_shim_old_fails_and_pinned_guard_reaches_command(self):
+        entrypoint = (ROOT / "scripts/habitat-entrypoint.sh").read_text()
+        old_entrypoint = entrypoint.replace("/usr/local/bin/habitat-python ", "python ", 1)
+        self.assertNotEqual(old_entrypoint, entrypoint)
+        old = self.run_entrypoint_fixture(old_entrypoint)
+        self.assertEqual(old.returncode, 127)
+        self.assertIn("project Python is not installed", old.stderr)
+        self.assertEqual(old.stdout, "")
+        fixed = self.run_entrypoint_fixture(entrypoint)
+        self.assertEqual(fixed.returncode, 0, fixed.stderr)
+        self.assertEqual(fixed.stdout, "guard\ncommand:argument with spaces\n")
+        self.assertEqual(fixed.stderr, "")
+
+    def test_pinned_guard_failure_still_blocks_requested_command(self):
+        result = self.run_entrypoint_fixture((ROOT / "scripts/habitat-entrypoint.sh").read_text(), guard_status=9)
+        self.assertEqual(result.returncode, 9)
+        self.assertEqual(result.stdout, "guard\n")
+        self.assertEqual(result.stderr, "")
 
     def test_only_reviewed_scripts_enter_build_context(self):
         self.assertEqual((ROOT / ".dockerignore").read_text(), "**\n!Dockerfile.dev\n!Dockerfile.proxy\n!squid.conf\n!scripts/\nscripts/**\n!scripts/check-node-security.py\n!scripts/habitat-entrypoint.sh\n")

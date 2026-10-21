@@ -75,13 +75,15 @@ ENV HOME=/home/ubuntu \
     DO_NOT_TRACK=1 \
     PATH=/home/ubuntu/.local/share/mise/shims:/home/ubuntu/.local/share/pnpm/bin:/home/ubuntu/.local/share/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
+RUN ln -s "${MISE_DATA_DIR}/installs/python/${PYTHON_VERSION}/bin/python" /usr/local/bin/habitat-python
+
 USER ubuntu
 
 RUN mise use --global "python@${PYTHON_VERSION}" \
     && mise reshim \
     && test "$(node --version)" = "v${NODE_VERSION}" \
-    && test "$(python --version)" = "Python ${PYTHON_VERSION}" \
-    && python /usr/local/lib/habitat/check-node-security.py
+    && test "$(/usr/local/bin/habitat-python --version)" = "Python ${PYTHON_VERSION}" \
+    && /usr/local/bin/habitat-python /usr/local/lib/habitat/check-node-security.py
 
 RUN corepack enable --install-directory "${PNPM_HOME}/bin" \
     && corepack prepare "pnpm@${PNPM_VERSION}" --activate \

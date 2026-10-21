@@ -29,6 +29,12 @@ unsupported versions, malformed output, actual-executable query failures, and
 the Docker build and startup guards. It also checks the supported lines' UTC
 expiry boundaries, the current image pin's support status, and the incident-specific
 CA package pins in both images. It downloads no runtime or dependency.
+The startup check uses `/usr/local/bin/habitat-python`. The image creates this
+link as root from `PYTHON_VERSION` and checks its version after installation.
+This bypasses the mounted project's [mise Python selection](https://mise.jdx.dev/configuration.html).
+A controlled shell fixture verifies that an unavailable project Python blocks
+the old startup command but not the pinned interpreter. A failing Node guard
+still blocks the requested command. These checks do not build the image.
 The Source security workflow runs these three source checks on pull requests
 and pushes to `main`. It does not build or publish an image.
 Its first step is the complete inline reviewed PowerShell probe. Before checkout,
