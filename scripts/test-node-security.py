@@ -22,6 +22,54 @@ assert spec is not None and spec.loader is not None
 policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(policy)
 POLICY_TEST_DATE = date(2026, 10, 21)
+verify_spec = importlib.util.spec_from_file_location("source_verifier", ROOT / "scripts/verify-source.py")
+assert verify_spec is not None and verify_spec.loader is not None
+verifier = importlib.util.module_from_spec(verify_spec)
+verify_spec.loader.exec_module(verifier)
+
+
+class ComposeBindSerializationTests(unittest.TestCase):
+    def probe(self, disabled, enabled, defaulted):
+        return {"services": {name: {"volumes": [volume]} for name, volume in
+                             (("disabled", disabled), ("enabled", enabled), ("defaulted", defaulted))}}
+
+    def test_old_serializer_omitted_false_is_accepted_only_as_disabled(self):
+        disabled = {"type": "bind", "bind": {}}
+        enabled = {"type": "bind", "bind": {"create_host_path": True}}
+        defaulted = {"type": "bind"}
+        signature = verifier.disabled_bind_signature(self.probe(disabled, enabled, defaulted))
+        self.assertTrue(verifier.bind_disables_creation(disabled, signature))
+        self.assertFalse(verifier.bind_disables_creation(enabled, signature))
+        self.assertFalse(verifier.bind_disables_creation(defaulted, signature))
+
+    def test_new_serializer_omitted_true_is_rejected(self):
+        disabled = {"type": "bind", "bind": {"create_host_path": False}}
+        enabled = {"type": "bind", "bind": {}}
+        signature = verifier.disabled_bind_signature(self.probe(disabled, enabled, enabled))
+        self.assertTrue(verifier.bind_disables_creation(disabled, signature))
+        self.assertFalse(verifier.bind_disables_creation(enabled, signature))
+
+    def test_probe_must_distinguish_false_from_true_and_default(self):
+        disabled = {"type": "bind", "bind": {}}
+        enabled = {"type": "bind", "bind": {"create_host_path": True}}
+        for probe in (self.probe(disabled, disabled, enabled), self.probe(disabled, enabled, disabled)):
+            with self.subTest(probe=probe), self.assertRaises(ValueError):
+                verifier.disabled_bind_signature(probe)
+
+    def test_present_non_boolean_or_malformed_bind_options_fail(self):
+        signature = (True, True, False)
+        for options in ({"create_host_path": True}, {"create_host_path": None}, {"create_host_path": "false"}, {"create_host_path": 0}, None, [], "false"):
+            with self.subTest(options=options):
+                self.assertFalse(verifier.bind_disables_creation({"type": "bind", "bind": options}, signature))
+        self.assertFalse(verifier.bind_disables_creation({"type": "bind"}, signature))
+        self.assertFalse(verifier.bind_disables_creation({"type": "volume"}, signature))
+        self.assertFalse(verifier.bind_disables_creation({}, signature))
+        self.assertFalse(verifier.bind_disables_creation({"type": "bind", "bind": {"create_host_path": False}}, None))
+
+    def test_missing_or_malformed_probe_fails_closed(self):
+        for probe in (None, {}, {"services": []}, {"services": {}}, {"services": {"disabled": {"volumes": []}}}):
+            with self.subTest(probe=probe), self.assertRaises(ValueError):
+                verifier.disabled_bind_signature(probe)
 
 
 class VersionPolicyTests(unittest.TestCase):

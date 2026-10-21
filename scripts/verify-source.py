@@ -29,6 +29,45 @@ def integer(value: object) -> int | None:
         return None
 
 
+def bind_creation_signature(volume: object) -> tuple[bool, bool, bool | None]:
+    """Keep field presence because Compose serializers omit different defaults."""
+    if not isinstance(volume, dict) or volume.get("type") != "bind":
+        raise ValueError("expected a rendered bind volume")
+    if "bind" not in volume:
+        return False, False, None
+    options = volume["bind"]
+    if not isinstance(options, dict):
+        raise ValueError("rendered bind options must be an object")
+    if "create_host_path" not in options:
+        return True, False, None
+    value = options["create_host_path"]
+    if type(value) is not bool:
+        raise ValueError("rendered create_host_path must be a boolean")
+    return True, True, value
+
+
+def disabled_bind_signature(probe: object) -> tuple[bool, bool, bool | None]:
+    if not isinstance(probe, dict) or not isinstance(probe.get("services"), dict):
+        raise ValueError("bind policy probe must contain services")
+    signatures = {}
+    for name in ("disabled", "enabled", "defaulted"):
+        service = probe["services"].get(name)
+        volumes = service.get("volumes") if isinstance(service, dict) else None
+        if not isinstance(volumes, list) or len(volumes) != 1:
+            raise ValueError("bind policy probe must have one volume per service")
+        signatures[name] = bind_creation_signature(volumes[0])
+    if signatures["disabled"] in (signatures["enabled"], signatures["defaulted"]):
+        raise ValueError("Compose cannot distinguish disabled host-path creation")
+    return signatures["disabled"]
+
+
+def bind_disables_creation(volume: object, disabled: tuple[bool, bool, bool | None] | None) -> bool:
+    try:
+        return disabled is not None and bind_creation_signature(volume) == disabled
+    except ValueError:
+        return False
+
+
 def main() -> int:
     failures: list[str] = []
     count = 0
@@ -52,6 +91,7 @@ def main() -> int:
         "config", "--format", "json",
     ]
     config = None
+    disabled = None
     try:
         rendered = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True,
                                   text=True, timeout=30, check=False)
@@ -59,7 +99,22 @@ def main() -> int:
         if rendered.returncode == 0:
             config = json.loads(rendered.stdout)
             check(isinstance(config, dict), "Compose output must be a JSON object")
-    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+            # Probe this parser's effective encoding. Older versions omit false,
+            # newer ones may omit true. Never infer policy from omission alone.
+            probe = {"name": "habitat-bind-policy-probe", "services": {}}
+            for name, enabled in (("disabled", False), ("enabled", True), ("defaulted", None)):
+                volume = {"type": "bind", "source": "/habitat-bind-policy-probe", "target": "/project"}
+                if enabled is not None:
+                    volume["bind"] = {"create_host_path": enabled}
+                probe["services"][name] = {"image": "scratch", "volumes": [volume]}
+            probe_command = command.copy()
+            probe_command[probe_command.index("-f") + 1] = "-"
+            probe_result = subprocess.run(probe_command, input=json.dumps(probe), capture_output=True,
+                                          text=True, timeout=30, check=False)
+            check(probe_result.returncode == 0, "docker compose bind policy probe failed")
+            if probe_result.returncode == 0:
+                disabled = disabled_bind_signature(json.loads(probe_result.stdout))
+    except (OSError, subprocess.TimeoutExpired, ValueError) as error:
         failures.append(f"cannot render Compose config: {type(error).__name__}")
 
     if isinstance(config, dict):
@@ -108,7 +163,7 @@ def main() -> int:
         if len(binds) == 1:
             bind = binds[0][1]
             check(bind.get("target") == "/workspace/project", "project bind target differs")
-            check(bind.get("bind", {}).get("create_host_path") is False,
+            check(bind_disables_creation(bind, disabled),
                   "project directory must exist before Compose runs")
         check(services.get("dev", {}).get("working_dir") == "/workspace/project",
               "dev working directory differs")

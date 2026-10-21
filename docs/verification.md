@@ -17,6 +17,11 @@ pattern scan and a separate private-path/account-marker check before its first p
 
 `scripts/verify-source.py` uses Docker Compose's parser to inspect the resolved
 configuration. It does not contact a Docker daemon or start containers.
+It also renders a small bind-policy probe through the same parser. This checks
+how that Compose version represents false, true, and default host-path creation.
+The actual project bind must match the distinct false case. Missing JSON fields
+alone do not count as false. Neither parser invocation pulls an image or creates
+the probe's host directory.
 `scripts/test-cli.py` runs the command wrapper against a mock Docker executable.
 It checks argument handling and dispatch without invoking real Docker.
 `scripts/test-node-security.py` tests supported fixed versions, affected and
