@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Test the Node policy without downloading runtimes or starting containers."""
+
+from __future__ import annotations
+
+import contextlib
+import importlib.util
+import io
+import os
+import re
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+from datetime import date, datetime, timezone
+
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("node_policy", ROOT / "scripts/check-node-security.py")
+assert spec is not None and spec.loader is not None
+policy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(policy)
+POLICY_TEST_DATE = date(2026, 10, 21)
+
+
+class VersionPolicyTests(unittest.TestCase):
+    def test_affected_releases_fail(self):
+        for version in ("22.23.2", "22.23.3", "v24.19.0", "24.21.0", "24.22.0", "26.12.0"):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                policy.check_version(version, today=POLICY_TEST_DATE)
+
+    def test_fixed_supported_releases_pass(self):
+        for version in ("22.23.4", "v24.22.1", "26.12.1", "22.24.0", "24.22.2", "26.13.0"):
+            with self.subTest(version=version):
+                policy.check_version(version, today=POLICY_TEST_DATE)
+
+    def test_unsupported_and_eol_fail(self):
+        for version in ("18.20.8", "20.20.2", "23.11.0", "25.9.0", "27.0.0", "28.0.0"):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                policy.check_version(version, today=POLICY_TEST_DATE)
+
+    def test_malformed_prerelease_and_ranges_fail(self):
+        for version in ("", "22", "22.23", ">=22.23.4", "24.x", "24.22.1-rc.1", "24.22.1+build", " 24.22.1", "24.22.1\n", "024.22.1", "v24.22.1\njunk"):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                policy.check_version(version, today=POLICY_TEST_DATE)
+
+    def test_each_supported_line_expires_on_its_utc_date(self):
+        for version, expiry in (("22.23.4", date(2027, 4, 30)), ("24.22.1", date(2028, 4, 30)), ("26.12.1", date(2029, 4, 30))):
+            with self.subTest(version=version):
+                policy.check_version(version, today=expiry.replace(day=29))
+                for today in (expiry, expiry.replace(month=5, day=1)):
+                    with self.assertRaisesRegex(ValueError, "expired Node major"):
+                        policy.check_version(version, today=today)
+
+    def test_default_clock_uses_utc_and_enforces_expiry(self):
+        with patch.object(policy, "datetime") as clock:
+            clock.now.return_value = datetime(2027, 4, 30, 0, 0, tzinfo=timezone.utc)
+            with self.assertRaisesRegex(ValueError, "expired Node major 22"):
+                policy.check_version("22.23.4")
+            clock.now.assert_called_once_with(timezone.utc)
+
+
+class ActualExecutableTests(unittest.TestCase):
+    def invoke(self, result=None, error=None, argv=None):
+        with patch.object(sys, "argv", argv or ["check-node-security.py"]), \
+             patch.object(policy.subprocess, "run", return_value=result, side_effect=error) as run, \
+             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            status = policy.main()
+        return status, run
+
+    def test_actual_executable_is_queried(self):
+        status, run = self.invoke(subprocess.CompletedProcess([], 0, "v22.23.4\n", ""))
+        self.assertEqual(status, 0)
+        run.assert_called_once_with(["node", "--version"], stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True, timeout=10, check=True)
+
+    def test_actual_affected_and_invalid_output_fail(self):
+        for output in ("v22.23.2\n", "v24.22.0\n", "v24.22.1\njunk\n", "v24.22.1 \n"):
+            with self.subTest(output=output):
+                status, _ = self.invoke(subprocess.CompletedProcess([], 0, output, ""))
+                self.assertEqual(status, 1)
+
+    def test_missing_failed_and_timed_out_node_fail(self):
+        for error in (FileNotFoundError("node"), subprocess.CalledProcessError(1, ["node"]), subprocess.TimeoutExpired(["node"], 10)):
+            with self.subTest(error=type(error).__name__):
+                status, _ = self.invoke(error=error)
+                self.assertEqual(status, 1)
+
+    def test_cli_version_override_is_refused(self):
+        status, run = self.invoke(argv=["check-node-security.py", "--version", "24.22.1"])
+        self.assertEqual(status, 1)
+        run.assert_not_called()
+
+    def test_cli_date_override_is_refused(self):
+        status, run = self.invoke(argv=["check-node-security.py", "--date", "2026-10-21"])
+        self.assertEqual(status, 1)
+        run.assert_not_called()
+
+    def test_actual_runtime_fails_after_utc_expiry(self):
+        with patch.object(policy, "datetime") as clock:
+            clock.now.return_value = datetime(2027, 4, 30, tzinfo=timezone.utc)
+            status, _ = self.invoke(subprocess.CompletedProcess([], 0, "v22.23.4\n", ""))
+        self.assertEqual(status, 1)
+
+
+class ImageContractTests(unittest.TestCase):
+    def test_both_images_use_incident_specific_ubuntu_ca_fix(self):
+        for name in ("Dockerfile.dev", "Dockerfile.proxy"):
+            with self.subTest(dockerfile=name):
+                dockerfile = (ROOT / name).read_text()
+                self.assertIn("ca-certificates=20260816ubuntu0.24.04.1", dockerfile)
+                self.assertNotIn("ca-certificates=20260601~24.04.1", dockerfile)
+
+    def test_pinned_release_has_not_expired_in_current_utc(self):
+        dockerfile = (ROOT / "Dockerfile.dev").read_text()
+        version = re.search(r'^ARG NODE_VERSION=(.*)$', dockerfile, re.MULTILINE)
+        self.assertIsNotNone(version)
+        policy.check_version(version.group(1))
+
+    def test_build_arg_override_fails_before_download(self):
+        dockerfile = (ROOT / "Dockerfile.dev").read_text()
+        match = re.search(r'^RUN (test "\$\{NODE_VERSION\}" = "22\.23\.4")$', dockerfile, re.MULTILINE)
+        self.assertIsNotNone(match)
+        self.assertLess(dockerfile.index(match.group(0)), dockerfile.index("RUN curl"))
+        bash = (Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git/bin/bash.exe") if os.name == "nt" else Path("/bin/bash")
+        for value in ("22.23.2", "24.19.0", "24.21.0", "24.22.0", "24.22.1", "22.23.4", "22.23.4; exit 0", ""):
+            environment = os.environ.copy()
+            environment.pop("BASH_ENV", None)
+            environment.pop("ENV", None)
+            environment["NODE_VERSION"] = value
+            result = subprocess.run([str(bash), "--noprofile", "--norc", "-c", match.group(1)],
+                                    env=environment, stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+            with self.subTest(version=value):
+                self.assertEqual(result.returncode == 0, value == "22.23.4", result.stderr.decode(errors="replace"))
+
+    def test_archive_and_actual_runtime_are_checked(self):
+        dockerfile = (ROOT / "Dockerfile.dev").read_text()
+        self.assertIn("ARG NODE_VERSION=22.23.4\n", dockerfile)
+        self.assertIn("1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce  /tmp/node.tar.xz", dockerfile)
+        self.assertLess(dockerfile.index("sha256sum --check --strict"), dockerfile.index("tar -xJf /tmp/node.tar.xz"))
+        self.assertNotIn('"node@${NODE_VERSION}"', dockerfile)
+        self.assertLess(dockerfile.index("python /usr/local/lib/habitat/check-node-security.py"), dockerfile.index("RUN corepack enable"))
+        self.assertIn('ENTRYPOINT ["/bin/bash", "/usr/local/bin/habitat-entrypoint"]', dockerfile)
+
+    def test_corepack_and_global_tools_keep_user_writable_paths(self):
+        dockerfile = (ROOT / "Dockerfile.dev").read_text()
+        self.assertIn('RUN corepack enable --install-directory "${PNPM_HOME}/bin"', dockerfile)
+        self.assertLess(dockerfile.index("USER ubuntu"), dockerfile.index("RUN corepack enable"))
+        self.assertIn("/home/ubuntu/.local/share/pnpm/bin:/home/ubuntu/.local/share/pnpm:", dockerfile)
+
+    def test_startup_guard_precedes_command_and_new_image_is_required(self):
+        entrypoint = (ROOT / "scripts/habitat-entrypoint.sh").read_text()
+        self.assertEqual(entrypoint, '#!/usr/bin/env bash\nset -euo pipefail\n\npython /usr/local/lib/habitat/check-node-security.py\nexec "$@"\n')
+        self.assertIn("image: habitat-vivary/dev:2026-10-21-node22.23.4", (ROOT / "compose.yaml").read_text())
+        self.assertIn("image: habitat-vivary/proxy:2026-10-21-emudhra", (ROOT / "compose.yaml").read_text())
+
+    def test_only_reviewed_scripts_enter_build_context(self):
+        self.assertEqual((ROOT / ".dockerignore").read_text(), "**\n!Dockerfile.dev\n!Dockerfile.proxy\n!squid.conf\n!scripts/\nscripts/**\n!scripts/check-node-security.py\n!scripts/habitat-entrypoint.sh\n")
+
+    def test_ci_runs_all_source_controls_without_publishing(self):
+        workflow = (ROOT / ".github/workflows/source-security.yml").read_text()
+        for command in ("python3 scripts/test-node-security.py", "python3 scripts/verify-source.py", "python3 scripts/test-cli.py"):
+            self.assertIn(command, workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertNotIn("continue-on-error", workflow)
+        self.assertNotIn("push: true", workflow)
+        self.assertNotIn("packages: write", workflow)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

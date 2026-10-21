@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 TEXT_FILES = (
     ".env.example", "compose.yaml", "Dockerfile.dev", "Dockerfile.proxy",
     "squid.conf", "habitat.sh", "scripts/verify-source.py", "scripts/test-cli.py",
+    "scripts/check-node-security.py", "scripts/test-node-security.py",
+    "scripts/habitat-entrypoint.sh", ".github/workflows/source-security.yml",
 )
 EXPECTED = {
     "proxy": {"cpus": 0.5, "memory": 256 * 1024**2, "pids": 64},

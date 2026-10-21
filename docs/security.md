@@ -31,16 +31,27 @@ The runtime proxy does not govern image builds. Docker executes package
 installation steps while building an image, with its own network access and
 resource use. Inspect the Dockerfiles before building.
 
-The Ubuntu base image and mise download have SHA-256 pins. The Dockerfiles pin
+The Ubuntu base image, mise download, and Node archive have SHA-256 pins. The Dockerfiles pin
 direct apt packages and tool versions, but they do not fully lock npm transitive
-resolution or every Node/Python download. The apt repository is a moving index,
+resolution or the Python download. The apt repository is a moving index,
 so an older pinned package may become unavailable. A pin is not a malware audit.
 
 Refresh pins deliberately. Review the upstream release and provenance, change
 the relevant Dockerfile arguments or apt version, rebuild in a disposable Linux
 environment, and repeat the first-build checks in [verification](verification.md).
 Keep authentication volumes and private project files out of image builds.
-The `.dockerignore` file permits only Dockerfiles and `squid.conf` in the build context.
+The `.dockerignore` file permits only Dockerfiles, `squid.conf`, and the two
+reviewed runtime-guard scripts in the build context.
+
+Both images pin the incident-specific Ubuntu 24.04 CA package from
+[USN-8944-1](https://ubuntu.com/security/notices/USN-8944-1). The notice documents
+emSign ECC Root CA - G3 removal. Installed trust contents and coverage of other
+certificate paths require separate image verification before use.
+
+The [Node security policy](node-security.md) checks the actual `node` executable
+before tool installation and container startup. It covers the declared Node
+runtime. Native tools can embed separate runtimes, and project dependencies can
+have their own vulnerabilities. These checks do not establish their safety.
 
 ## Sharing
 

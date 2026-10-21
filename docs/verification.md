@@ -19,6 +19,17 @@ pattern scan and a separate private-path/account-marker check before its first p
 configuration. It does not contact a Docker daemon or start containers.
 `scripts/test-cli.py` runs the command wrapper against a mock Docker executable.
 It checks argument handling and dispatch without invoking real Docker.
+`scripts/test-node-security.py` tests supported fixed versions, affected and
+unsupported versions, malformed output, actual-executable query failures, and
+the Docker build and startup guards. It also checks the supported lines' UTC
+expiry boundaries, the current image pin's support status, and the incident-specific
+CA package pins in both images. It downloads no runtime or dependency.
+The Source security workflow runs these three source checks on pull requests
+and pushes to `main`. It does not build or publish an image.
+
+For the October 21 Node change, container-build and tool compatibility checks
+remain pending. See [Node security verification](node-security.md) for the
+archive-authentication prerequisite and publication limits.
 
 Before publication, scan every reachable Git blob for credentials. A clean
 pattern scan is limited to the patterns it checks. These source checks do not
