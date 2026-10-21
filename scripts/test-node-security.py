@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 import hashlib
 from pathlib import Path
@@ -33,6 +34,49 @@ class ActionRuntimeBindingTests(unittest.TestCase):
     def setUp(self):
         self.canonical = (ROOT / "scripts/action-runtime.ps1").read_bytes()
         self.workflow = (ROOT / ".github/workflows/source-security.yml").read_text()
+
+    def checkout_with_attributes(self, attributes, autocrlf):
+        environment = os.environ.copy()
+        for key in list(environment):
+            if key.startswith("GIT_CONFIG_") or key in {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR"}:
+                environment.pop(key)
+        environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_ATTR_NOSYSTEM="1")
+        with tempfile.TemporaryDirectory(prefix="habitat-lf-checkout-") as directory:
+            fixture = Path(directory)
+            template = fixture / "empty-template"
+            template.mkdir()
+            (fixture / ".gitattributes").write_text(attributes, encoding="utf-8", newline="\n")
+            command = ["git", "-c", f"core.attributesFile={os.devnull}", "-c", f"core.autocrlf={autocrlf}"]
+
+            def git(*arguments, input=None):
+                return subprocess.run(command + list(arguments), cwd=fixture, env=environment,
+                                      input=input, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      timeout=10, check=True).stdout
+
+            git("init", "--quiet", f"--template={template}")
+            blob = git("hash-object", "-w", "--stdin", input=self.canonical).decode().strip()
+            for name in ("scripts/action-runtime.ps1", "scripts/other.ps1"):
+                git("update-index", "--add", "--cacheinfo", f"100644,{blob},{name}")
+            git("checkout-index", "--all", "--force")
+            return tuple((fixture / name).read_bytes() for name in ("scripts/action-runtime.ps1", "scripts/other.ps1"))
+
+    def test_real_git_checkout_keeps_vetted_probe_lf_and_other_powershell_crlf(self):
+        attributes = (ROOT / ".gitattributes").read_text()
+        for autocrlf in ("true", "false"):
+            with self.subTest(autocrlf=autocrlf):
+                actual, other = self.checkout_with_attributes(attributes, autocrlf)
+                self.assertEqual(actual, self.canonical)
+                self.assertTrue(verifier.action_runtime_binding_matches(actual, self.workflow))
+                self.assertEqual(other, self.canonical.replace(b"\n", b"\r\n"))
+
+    def test_old_crlf_policy_changes_bytes_and_is_rejected(self):
+        attributes = (ROOT / ".gitattributes").read_text()
+        old_attributes = attributes.replace("scripts/action-runtime.ps1 text eol=lf\n", "")
+        self.assertNotEqual(old_attributes, attributes)
+        old, _ = self.checkout_with_attributes(old_attributes, "false")
+        self.assertEqual(old, self.canonical.replace(b"\n", b"\r\n"))
+        self.assertNotEqual(hashlib.sha256(old).digest(), hashlib.sha256(self.canonical).digest())
+        self.assertFalse(verifier.action_runtime_binding_matches(old, self.workflow))
 
     def test_first_step_binds_exact_vetted_source_bytes(self):
         self.assertEqual(hashlib.sha256(self.canonical).hexdigest(),
