@@ -2,3 +2,7 @@
 !Dockerfile.dev
 !Dockerfile.proxy
 !squid.conf
+!scripts/
+scripts/**
+!scripts/check-node-security.py
+!scripts/habitat-entrypoint.sh

@@ -109,6 +109,7 @@ sending data to it. No ports are published for browser previews in this export.
 ```bash
 python3 scripts/verify-source.py
 python3 scripts/test-cli.py
+python3 scripts/test-node-security.py
 ```
 
 These checks validate configuration and command dispatch without starting a
@@ -116,5 +117,13 @@ container. See [verification](docs/verification.md) for what was checked and the
 remaining first-build checks. The Dockerfiles retain dependency pins from the
 original sandbox. Old apt versions can leave repository indexes, and exact
 top-level versions do not lock every transitive dependency.
+
+The development image now pins Node 22.23.4 and its official Linux x64 archive
+checksum. Its build rejects version overrides and checks the actual executable
+before installing tools. Its entrypoint repeats that check before starting the
+container command. Both images use new tags and the incident-specific Ubuntu CA
+package pin. Rebuild both rather than reusing the September images. Existing
+running containers are unchanged.
+Read [Node security verification](docs/node-security.md) before rebuilding.
 
 The [codebase map](codebase-map.html) explains the files and how they fit together.

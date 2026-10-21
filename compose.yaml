@@ -6,7 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.proxy
-    image: habitat-vivary/proxy:2026-09-10
+    image: habitat-vivary/proxy:2026-10-21-emudhra
     networks: [egress, sandbox]
     read_only: true
     cap_drop: [ALL]
@@ -32,7 +32,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    image: habitat-vivary/dev:2026-09-10
+    image: habitat-vivary/dev:2026-10-21-node22.23.4
     depends_on:
       proxy:
         condition: service_healthy
